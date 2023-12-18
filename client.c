@@ -3,111 +3,84 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#define DEBUGFS_VM_PATH "/sys/kernel/debug/lab_info/vm"
-
-
-enum request_type {
-    VM_AREA, PPP_CHAN
-};
+#define DEBUGFS_VM_PATH "/sys/kernel/debug/lab2_os/top"
 
 struct request {
-    enum request_type type;
-    union {
-        int pid;
-        int interface_num;
-    };
-    int index;
+    int error;
+    int process_limit;
 };
 
-
-struct vm_area_struct_info {
-    unsigned long vm_start;
-    unsigned long vm_end;
-    unsigned long vm_flags;
-    unsigned long vm_pgoff;
+struct cpu_load {
+    long avg_load;      /* One minute load avg*/
+	long total_ram;	    /* Total usable main memory size */
+	long free_ram;	    /* Available memory size */
+	long shared_ram;	/* Amount of shared memory */
+	long total_swap;	/* Total swap space size */
+	long free_swap;	    /* swap space still available */
+	long proc_count;	/* Number of current processes */
 };
 
-struct ppp_struct_info {
-    int mtu;        /* max transmit packet size */
-    int hdrlen;        /* amount of headroom channel needs */
-    int speed;        /* transfer rate (bytes/second) */
-    int latency;    /* overhead time in milliseconds */
-
+struct process {
+    long pid;
+    unsigned int uid;
+    long prio;
+    long virt_mem;
+    long rss;
+    unsigned int state;
+    long utime;
+    long stime;
 };
 
-struct ppp_chan_struct_info_msg {
-    int err;
-    struct ppp_struct_info ppp_struct_info;
+struct process_info {
+    int error;
+    struct cpu_load load;
+    struct process procs[10];
 };
-
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        fprintf(stderr, "Usage: %s 1 <pid> <index> OR 2 <pid>\n", argv[0]);
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <process_count>\n", argv[0]);
         return 1;
     }
-    int type = atoi(argv[1]);
-    struct request req;
     int fd = open(DEBUGFS_VM_PATH, O_RDWR);
     if (fd == -1) {
         perror("Error opening debugfs file");
         return 1;
     }
-
-    if(type == 1) {
-        if(argc != 4) {
-            return 1;
-        }
-        int pid = atoi(argv[2]);
-        int index = atoi(argv[3]);
-        req = (struct request) {
-                VM_AREA, pid, index
-        };
-        ssize_t err = write(fd, &req, sizeof(struct request));
-        if (err < 0) {
-            fprintf(stderr, "Error while writing to file");
-            close(fd);
-            return 1;
-        }
-        struct vm_area_struct_info info;
-        ssize_t bytesRead = read(fd, &info, sizeof(struct vm_area_struct_info));
-        if (bytesRead == 0) {
-            printf("Got info!\n");
-            printf("data of vm area are:");
-            printf("vm_start: %lu\n vm_end: %lu\n vm_flags: %lu\n vm_pgoff: %lu\n",
-                   info.vm_start, info.vm_end, info.vm_flags, info.vm_pgoff);
-        } else {
-            perror("Error reading from debugfs file");
-            close(fd);
-            return 1;
-        }
+    int process_count = atoi(argv[1]);
+    struct request req = {
+        .process_limit = process_count
+    };
+    ssize_t err = write(fd, &req, sizeof(struct request));
+    if (err < 0) {
+        fprintf(stderr, "Error while writing to file");
+        close(fd);
+        return 1;
     }
-    if(type == 2) {
-        int interface_index = atoi(argv[2]);
-        req = (struct request) {
-                PPP_CHAN, .interface_num = interface_index
-        };
-        ssize_t err = write(fd, &req, sizeof(struct request));
-        if (err < 0) {
-            fprintf(stderr, "Error while writing to file");
-            close(fd);
-            return 1;
+    struct process_info info;
+    ssize_t bytesRead = read(fd, &info, sizeof(struct process_info));
+    if (bytesRead == 0) {
+        printf("Printing top\n");
+        printf("Cpu load: %ld\nTotal Ram: %ld\tFree Ram: %ld\n\
+Total swap: %ld\tFree swap: %ld\nShared mem: %ld\n\
+Current processes: %ld\n",
+         info.load.avg_load, info.load.total_ram, info.load.free_ram,
+         info.load.total_swap, info.load.free_swap, info.load.shared_ram,
+         info.load.proc_count);
+        printf("PID\tUID\tPrio\tVirt\tRss\t\tState\tUtime\t\tStime\t\tMemPerc\n");
+        for (int i = 0; i < 10; i++) {
+            printf("%ld\t%d\t%ld\t%ld\t%ld\t%d\t%ld\t%ld\t%f\n",
+            info.procs[i].pid, info.procs[i].uid, info.procs[i].prio,
+            info.procs[i].virt_mem, info.procs[i].rss, info.procs[i].state,
+            info.procs[i].utime, info.procs[i].stime,
+            (float) info.procs[i].virt_mem / (float) info.load.total_ram);
         }
-        struct ppp_struct_info info;
-        ssize_t bytesRead = read(fd, &info, sizeof(struct ppp_struct_info));
-        if (bytesRead == 0) {
-            printf("Got info!\n");
-            printf("data of ppp channel are:\n");
-            printf("latency: %d\n speed: %d\n hdrlen: %d\n mtu: %d\n",
-                   info.latency, info.speed, info.hdrlen, info.mtu);
-        } else {
-            perror("Error reading from debugfs file");
-            close(fd);
-            return 1;
-        }
-
-
+    } else {
+        perror("Error reading from debugfs file");
+        close(fd);
+        return 1;
     }
+ 
     close(fd);
     return 0;
 }
